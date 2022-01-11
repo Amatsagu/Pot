@@ -127,6 +127,11 @@ impl Header {
         Some((chunk, ptr))
     }
 
+    #[inline]
+    pub fn has(&self, key: String) -> bool {
+        self.keys.contains_key(&key)
+    }
+
     pub async fn remove(mut self, key: String) -> bool {
         let index: u64 = match self.keys.get(&key) {
             Some(v) => *v as u64,
