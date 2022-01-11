@@ -97,7 +97,7 @@ impl Header {
     }
 
     pub async fn set(mut self, key: String) -> bool {
-        if self.keys.contains_key(&key) {
+        if !self.keys.contains_key(&key) {
             return false;
         }
         self.keys.insert(key.clone(), self.key_count as usize);
@@ -119,10 +119,44 @@ impl Header {
     }
 
     pub fn get(&self, key: String) -> Option<(u8, usize)> {
-        None
+        let v = *self.keys.get(&key)?;
+
+        let chunk = (v % (self.chunk_count as usize)) as u8;
+        let ptr = v / self.chunk_count as usize;
+
+        Some((chunk, ptr))
     }
 
-    pub async fn remove(self, key: String) -> bool {
+    pub async fn remove(mut self, key: String) -> bool {
+        let index: u64 = match self.keys.get(&key) {
+            Some(v) => *v as u64,
+            None => return false,
+        };
+
+        let ptr = index * self.key_count + 10;
+        let next_ptr = ptr * self.key_count;
+        self.key_count -= 1;
+        let io_result: IOResult<()> = task::spawn(async move {
+            let mut reader = self.mutex_reader.lock().unwrap();
+            let mut writer = self.mutex_writer.lock().unwrap();
+
+            let mut buff: Vec<u8> = Vec::new();
+
+            reader.seek(SeekFrom::Start(next_ptr))?;
+            reader.read_to_end(&mut buff);
+
+            writer.seek(SeekFrom::Start(ptr))?;
+            writer.write_all(&buff)?;
+            writer.seek(SeekFrom::Start(2))?;
+            writer.write_all(&self.key_count.to_be_bytes())?;
+            writer.flush()?;
+
+            Ok(())
+        })
+        .await
+        .unwrap();
+        io_result.unwrap();
+
         true
     }
 }
