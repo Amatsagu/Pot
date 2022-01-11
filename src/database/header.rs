@@ -11,8 +11,6 @@ use std::io::Write;
 use std::sync::Mutex;
 use tokio::task;
 
-const KEY_COUNT_PTR: SeekFrom = SeekFrom::Start(2);
-
 pub struct Header {
     mutex_reader: Mutex<BufReader<File>>,
     mutex_writer: Mutex<BufWriter<File>>,
@@ -23,7 +21,7 @@ pub struct Header {
 }
 
 pub struct HeaderOptions {
-    pub directory_name: String,
+    pub base_dir: String,
     pub key_length: u8,
     pub chunk_count: u8,
 }
@@ -35,7 +33,7 @@ impl Header {
             .read(true)
             .write(true)
             .create(false)
-            .open(opt.directory_name)?;
+            .open(format!("{}/header", opt.base_dir))?;
         file_handle.seek(SeekFrom::Start(0));
         let bytes = [0; 2];
         let key_count_bytes = [0; 8];
@@ -72,7 +70,7 @@ impl Header {
             .read(true)
             .write(true)
             .create(true)
-            .open(opt.directory_name)?;
+            .open(format!("{}/header", opt.base_dir))?;
 
         file_handle.write(&[0; 10]);
         file_handle.flush();
@@ -105,7 +103,7 @@ impl Header {
             let mut writer = self.mutex_writer.lock().unwrap();
             let ptr = self.key_count * self.key_length as u64;
 
-            writer.seek(SeekFrom::Start(ptr))?;
+            writer.seek(SeekFrom::Start(ptr));
             writer.write(&key.as_bytes())?;
             writer.flush()?;
             Ok(())
@@ -147,12 +145,12 @@ impl Header {
 
             let mut buff: Vec<u8> = Vec::new();
 
-            reader.seek(SeekFrom::Start(next_ptr))?;
+            reader.seek(SeekFrom::Start(next_ptr));
             reader.read_to_end(&mut buff);
 
-            writer.seek(SeekFrom::Start(ptr))?;
+            writer.seek(SeekFrom::Start(ptr));
             writer.write_all(&buff)?;
-            writer.seek(SeekFrom::Start(2))?;
+            writer.seek(SeekFrom::Start(2));
             writer.write_all(&self.key_count.to_be_bytes())?;
             writer.flush()?;
 
