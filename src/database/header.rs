@@ -29,11 +29,92 @@ pub struct HeaderOptions {
 }
 
 impl Header {
-    pub fn new(opt: HeaderOptions) -> IOResult<Self> {
-        Ok(Self)
+    fn load_header(opt: HeaderOptions) -> IOResult<Self> {
+        let mut open_options = OpenOptions::new();
+        let file_handle = open_options
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(opt.directory_name)?;
+        file_handle.seek(SeekFrom::Start(0));
+        let bytes = [0; 2];
+        let key_count_bytes = [0; 8];
+        file_handle.read(&mut bytes)?;
+        file_handle.read(&mut key_count_bytes)?;
+        let key_length = bytes[0];
+        let chunk_count = bytes[1];
+        let key_count = u64::from_be_bytes(key_count_bytes);
+        let mut header = Self {
+            mutex_reader: Mutex::new(BufReader::new(file_handle)),
+            mutex_writer: Mutex::new(BufWriter::new(file_handle)),
+            key_length,
+            key_count,
+            chunk_count,
+            keys: HashMap::new(),
+        };
+
+        for i in 0..key_count as usize {
+            let buff = Vec::with_capacity(key_length as usize);
+            let read = file_handle.read(&mut buff)?;
+            if read != key_length as usize {
+                break;
+            }
+            let key = String::from_utf8_lossy(&buff).to_string();
+            header.keys.insert(key, i);
+        }
+
+        Ok(header)
     }
 
-    pub async fn set(self, key: String) -> bool {
+    fn create_header(opt: HeaderOptions) -> IOResult<Self> {
+        let mut open_options = OpenOptions::new();
+        let file_handle = open_options
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(opt.directory_name)?;
+
+        file_handle.write(&[0; 10]);
+        file_handle.flush();
+
+        Ok(Self {
+            mutex_reader: Mutex::new(BufReader::new(file_handle)),
+            mutex_writer: Mutex::new(BufWriter::new(file_handle)),
+            key_count: 0,
+            key_length: 0,
+            chunk_count: 0,
+            keys: HashMap::new(),
+        })
+    }
+
+    pub fn new(opt: HeaderOptions) -> IOResult<Self> {
+        let header = match Header::load_header(opt) {
+            Ok(v) => v,
+            Err(_) => Header::create_header(opt)?,
+        };
+
+        Ok(header)
+    }
+
+    pub async fn set(mut self, key: String) -> bool {
+        if self.keys.contains_key(&key) {
+            return false;
+        }
+        self.keys.insert(key.clone(), self.key_count as usize);
+        let io_result: IOResult<()> = task::spawn(async move {
+            let mut writer = self.mutex_writer.lock().unwrap();
+            let ptr = self.key_count * self.key_length as u64;
+
+            writer.seek(SeekFrom::Start(ptr))?;
+            writer.write(&key.as_bytes())?;
+            writer.flush()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        self.key_count += 1;
+
         true
     }
 
